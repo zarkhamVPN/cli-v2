@@ -3,7 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -59,9 +59,35 @@ func startServer() {
 	mux.HandleFunc("/api/wardens", handleGetWardens)
 	mux.HandleFunc("/api/node/connect", handleNodeConnect)
 
-	// GUI placeholder (will be replaced with embed later)
+	// GUI Server
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Zarkham GUI Server (Porting in progress...)")
+		path := r.URL.Path
+		if path == "/" {
+			path = "index.html"
+		} else if path[0] == '/' {
+			path = path[1:]
+		}
+
+		f, err := embeddedGUI.Open(path)
+		if os.IsNotExist(err) {
+			// SPA Fallback: Serve index.html for unknown paths
+			index, err := embeddedGUI.Open("index.html")
+			if err != nil {
+				http.Error(w, "GUI not found", 404)
+				return
+			}
+			defer index.Close()
+			stat, _ := index.Stat()
+			http.ServeContent(w, r, "index.html", stat.ModTime(), index.(io.ReadSeeker))
+			return
+		} else if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		defer f.Close()
+
+		stat, _ := f.Stat()
+		http.ServeContent(w, r, path, stat.ModTime(), f.(io.ReadSeeker))
 	})
 
 	log.Println("Zarkham API Server listening on :8088")

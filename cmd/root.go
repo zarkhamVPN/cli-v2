@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 
 	figure "github.com/common-nighthawk/go-figure"
@@ -25,7 +26,10 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-func Execute() {
+var embeddedGUI fs.FS
+
+func Execute(guiFS fs.FS) {
+	embeddedGUI = guiFS
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)
