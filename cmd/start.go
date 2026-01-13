@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -55,9 +56,17 @@ func startServer() {
 	mux := http.NewServeMux()
 
 	// API Endpoints
-	mux.HandleFunc("/api/warden-status", handleWardenStatus)
-	mux.HandleFunc("/api/wardens", handleGetWardens)
-	mux.HandleFunc("/api/node/connect", handleNodeConnect)
+	mux.HandleFunc("/api/warden-status", corsMiddleware(handleWardenStatus))
+	mux.HandleFunc("/api/wardens", corsMiddleware(handleGetWardens))
+	mux.HandleFunc("/api/node/connect", corsMiddleware(handleNodeConnect))
+	mux.HandleFunc("/api/balance", corsMiddleware(handleGetBalance))
+	mux.HandleFunc("/api/addresses", corsMiddleware(handleGetAddresses))
+	mux.HandleFunc("/api/register-warden", corsMiddleware(handleRegisterWarden))
+	mux.HandleFunc("/api/node/start", corsMiddleware(handleNodeStart))
+	mux.HandleFunc("/api/node/stop", corsMiddleware(handleNodeStop))
+	mux.HandleFunc("/api/node/status", corsMiddleware(handleNodeStatus))
+	mux.HandleFunc("/api/history", corsMiddleware(handleGetHistory))
+	mux.HandleFunc("/api/profile", corsMiddleware(handleGetProfile))
 
 	// GUI Server
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +140,102 @@ func handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(200)
+}
+
+func handleGetBalance(w http.ResponseWriter, r *http.Request) {
+	profile := r.URL.Query().Get("profile")
+	if profile == "" {
+		http.Error(w, "missing profile", 400)
+		return
+	}
+	bal, err := nodeInstance.GetWalletBalance(r.Context(), profile)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]uint64{"lamports": bal})
+}
+
+func handleGetAddresses(w http.ResponseWriter, r *http.Request) {
+	addrs, err := nodeInstance.GetAddresses()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(addrs)
+}
+
+func handleRegisterWarden(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Profile     string  `json:"profile"`
+		StakeToken  string  `json:"stakeToken"`
+		StakeAmount float64 `json:"stakeAmount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	sig, err := nodeInstance.RegisterWarden(r.Context(), req.Profile, req.StakeToken, req.StakeAmount)
+	if err != nil {
+		log.Printf("Registration failed: %v", err)
+		http.Error(w, fmt.Sprintf("Registration failed: %v", err), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"transactionSignature": sig})
+}
+
+func handleNodeStart(w http.ResponseWriter, r *http.Request) {
+	if err := nodeInstance.Start(r.Context(), profile); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+func handleNodeStop(w http.ResponseWriter, r *http.Request) {
+	if err := nodeInstance.Stop(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
+}
+
+func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
+	status := nodeInstance.Status()
+	json.NewEncoder(w).Encode(status)
+}
+
+func handleGetHistory(w http.ResponseWriter, r *http.Request) {
+	profile := r.URL.Query().Get("profile")
+	if profile == "" {
+		http.Error(w, "missing profile", 400)
+		return
+	}
+	history, err := nodeInstance.GetHistory(r.Context(), profile)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(history)
+}
+
+func handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	json.NewEncoder(w).Encode(map[string]string{"profile": profile})
+}
+
+func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next(w, r)
+	}
 }
 
 func init() {

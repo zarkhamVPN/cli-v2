@@ -6,6 +6,7 @@ import (
 	"os"
 
 	figure "github.com/common-nighthawk/go-figure"
+	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
 
@@ -13,20 +14,24 @@ var (
 	cfgDir      string
 	rpcEndpoint string
 	profile     string
+	embeddedGUI fs.FS
 )
 
 var rootCmd = &cobra.Command{
 	Use:   "zarkham",
 	Short: "Zarkham helps you join the decentralized VPN network.",
 	Long:  `A modular CLI to run Zarkham dVPN nodes and manage your Solana-based bandwidth economy.`,
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		if err := godotenv.Load(); err != nil {
+			// Ignore missing .env in prod
+		}
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		myFigure := figure.NewFigure("ZARKHAM", "larry3d", true)
 		fmt.Println(titleStyle.Render(myFigure.String()))
 		fmt.Println(promptStyle.Render("Welcome to Zarkham. Use 'zarkham --help' for available commands."))
 	},
 }
-
-var embeddedGUI fs.FS
 
 func Execute(guiFS fs.FS) {
 	embeddedGUI = guiFS
