@@ -62,6 +62,8 @@ func startServer() {
 	// API Endpoints
 	mux.HandleFunc("/api/warden-status", corsMiddleware(handleWardenStatus))
 	mux.HandleFunc("/api/wardens", corsMiddleware(handleGetWardens))
+	mux.HandleFunc("/api/warden/lookup", corsMiddleware(handleWardenLookup)) // New
+	mux.HandleFunc("/api/deposit", corsMiddleware(handleDeposit))           // New
 	mux.HandleFunc("/api/node/connect", corsMiddleware(handleNodeConnect))
 	mux.HandleFunc("/api/balance", corsMiddleware(handleGetBalance))
 	mux.HandleFunc("/api/addresses", corsMiddleware(handleGetAddresses))
@@ -130,15 +132,52 @@ func handleGetWardens(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(wardens)
 }
 
-func handleNodeConnect(w http.ResponseWriter, r *http.Request) {
+func handleWardenLookup(w http.ResponseWriter, r *http.Request) {
+	peerID := r.URL.Query().Get("peer_id")
+	if peerID == "" {
+		http.Error(w, "missing peer_id", 400)
+		return
+	}
+	warden, err := nodeInstance.LookupWarden(r.Context(), peerID)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	json.NewEncoder(w).Encode(warden)
+}
+
+func handleDeposit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Multiaddr string `json:"multiaddr"`
+		Amount uint64 `json:"amount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", 400)
 		return
 	}
-	err := nodeInstance.ManualConnect(r.Context(), req.Multiaddr)
+	sig, err := nodeInstance.DepositEscrow(r.Context(), req.Amount)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"signature": sig})
+}
+
+func handleNodeConnect(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Multiaddr   string `json:"multiaddr"`
+		EstimatedMb uint64 `json:"estimatedMb"` // Optional
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	
+	mb := req.EstimatedMb
+	if mb == 0 {
+		mb = 100 // Default
+	}
+
+	err := nodeInstance.ManualConnect(r.Context(), req.Multiaddr, mb)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
