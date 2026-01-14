@@ -9,13 +9,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"zarkham/core"
-	"zarkham/core/p2p" // Added for p2p.NodeStatus
+
+	"github.com/multiformats/go-multiaddr"
+	manet "github.com/multiformats/go-multiaddr-net"
 	"github.com/spf13/cobra"
-	"github.com/multiformats/go-multiaddr" // Added
-	"github.com/multiformats/go-multiaddr-net" // Added
 )
 
 var nodeInstance *core.ZarkhamNode
@@ -205,7 +206,7 @@ func handleNodeStop(w http.ResponseWriter, r *http.Request) {
 
 func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	status := nodeInstance.Status()
-	
+
 	// Find the optimal P2P multiaddr
 	var p2pMultiaddr string
 	var publicQuicAddr string
@@ -223,7 +224,7 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 			if manet.IsPublicAddr(ma) {
 				publicQuicAddr = addrStr
 				break // Found a public one, prioritize and break
-			} else if privateQuicAddr == "" && !manet.IsLoopback(ma) {
+			} else if privateQuicAddr == "" && !strings.Contains(addrStr, "127.0.0.1") {
 				// Keep the first non-loopback private address as a fallback
 				privateQuicAddr = addrStr
 			}
@@ -236,7 +237,6 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		p2pMultiaddr = privateQuicAddr
 	} else if len(status.Addresses) > 0 {
 		// Fallback to the first available address if no quic-v1 specific found
-		// This should ideally not happen if libp2p is configured correctly for quic-v1
 		for _, addrStr := range status.Addresses {
 			ma, err := multiaddr.NewMultiaddr(addrStr)
 			if err != nil {
@@ -249,12 +249,19 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Append PeerID to make it a full multiaddr if we found a base address
+	if p2pMultiaddr != "" && status.PeerID != "" {
+		// Check if it already has the p2p component (it shouldn't, but safety first)
+		if !strings.Contains(p2pMultiaddr, "/p2p/") {
+			p2pMultiaddr = fmt.Sprintf("%s/p2p/%s", p2pMultiaddr, status.PeerID)
+		}
+	}
 
 	response := map[string]interface{}{
-		"isRunning":     status.IsRunning,
-		"peerId":        status.PeerID,
-		"addresses":     status.Addresses, // Keep all addresses for debugging/info
-		"p2pMultiaddr":  p2pMultiaddr,     // The selected optimal multiaddr
+		"isRunning":    status.IsRunning,
+		"peerId":       status.PeerID,
+		"addresses":    status.Addresses, // Keep all addresses for debugging/info
+		"p2pMultiaddr": p2pMultiaddr,     // The selected optimal multiaddr
 	}
 	json.NewEncoder(w).Encode(response)
 }
