@@ -1,1 +1,0 @@
-import{w as o}from"./DWVmqvGf.js";const s=o([]);let n=0;function d(a,e="info"){const t=n++;s.update(i=>[...i,{id:t,message:a,type:e}]),setTimeout(()=>r(t),3e3)}function r(a){s.update(e=>e.filter(t=>t.id!==a))}const u=o("warden"),f=o("overview");export{u as a,f as b,d as c,r,s as t};
