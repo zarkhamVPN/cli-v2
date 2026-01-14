@@ -64,8 +64,10 @@ func startServer() {
 	mux.HandleFunc("/api/seeker-status", corsMiddleware(handleSeekerStatus)) // New
 	mux.HandleFunc("/api/wardens", corsMiddleware(handleGetWardens))
 	mux.HandleFunc("/api/warden/lookup", corsMiddleware(handleWardenLookup)) // New
-	mux.HandleFunc("/api/deposit", corsMiddleware(handleDeposit))           // New
+	mux.HandleFunc("/api/deposit", corsMiddleware(handleDeposit))
 	mux.HandleFunc("/api/node/connect", corsMiddleware(handleNodeConnect))
+	mux.HandleFunc("/api/node/latency", corsMiddleware(handleGetLatency)) // New
+	mux.HandleFunc("/api/seeker/disconnect", corsMiddleware(handleSeekerDisconnect))
 	mux.HandleFunc("/api/balance", corsMiddleware(handleGetBalance))
 	mux.HandleFunc("/api/addresses", corsMiddleware(handleGetAddresses))
 	mux.HandleFunc("/api/register-warden", corsMiddleware(handleRegisterWarden))
@@ -122,6 +124,22 @@ func handleSeekerStatus(w http.ResponseWriter, r *http.Request) {
 		"is_registered": reg,
 		"seeker":        data,
 	})
+}
+
+func handleSeekerDisconnect(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		WardenAuthority string `json:"wardenAuthority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	err := nodeInstance.DisconnectWarden(r.Context(), req.WardenAuthority)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	w.WriteHeader(200)
 }
 
 func handleWardenStatus(w http.ResponseWriter, r *http.Request) {
