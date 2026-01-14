@@ -12,7 +12,10 @@ import (
 	"syscall"
 
 	"zarkham/core"
+	"zarkham/core/p2p" // Added for p2p.NodeStatus
 	"github.com/spf13/cobra"
+	"github.com/multiformats/go-multiaddr" // Added
+	"github.com/multiformats/go-multiaddr-net" // Added
 )
 
 var nodeInstance *core.ZarkhamNode
@@ -202,7 +205,58 @@ func handleNodeStop(w http.ResponseWriter, r *http.Request) {
 
 func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	status := nodeInstance.Status()
-	json.NewEncoder(w).Encode(status)
+	
+	// Find the optimal P2P multiaddr
+	var p2pMultiaddr string
+	var publicQuicAddr string
+	var privateQuicAddr string
+
+	for _, addrStr := range status.Addresses {
+		ma, err := multiaddr.NewMultiaddr(addrStr)
+		if err != nil {
+			log.Printf("Failed to parse multiaddr '%s': %v", addrStr, err)
+			continue
+		}
+
+		if _, err := ma.ValueForProtocol(multiaddr.P_QUIC_V1); err == nil {
+			// This is a quic-v1 address
+			if manet.IsPublicAddr(ma) {
+				publicQuicAddr = addrStr
+				break // Found a public one, prioritize and break
+			} else if privateQuicAddr == "" && !manet.IsLoopback(ma) {
+				// Keep the first non-loopback private address as a fallback
+				privateQuicAddr = addrStr
+			}
+		}
+	}
+
+	if publicQuicAddr != "" {
+		p2pMultiaddr = publicQuicAddr
+	} else if privateQuicAddr != "" {
+		p2pMultiaddr = privateQuicAddr
+	} else if len(status.Addresses) > 0 {
+		// Fallback to the first available address if no quic-v1 specific found
+		// This should ideally not happen if libp2p is configured correctly for quic-v1
+		for _, addrStr := range status.Addresses {
+			ma, err := multiaddr.NewMultiaddr(addrStr)
+			if err != nil {
+				continue
+			}
+			if _, err := ma.ValueForProtocol(multiaddr.P_QUIC_V1); err == nil {
+				p2pMultiaddr = addrStr
+				break
+			}
+		}
+	}
+
+
+	response := map[string]interface{}{
+		"isRunning":     status.IsRunning,
+		"peerId":        status.PeerID,
+		"addresses":     status.Addresses, // Keep all addresses for debugging/info
+		"p2pMultiaddr":  p2pMultiaddr,     // The selected optimal multiaddr
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func handleGetHistory(w http.ResponseWriter, r *http.Request) {
