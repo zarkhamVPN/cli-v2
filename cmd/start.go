@@ -61,6 +61,7 @@ func startServer() {
 
 	// API Endpoints
 	mux.HandleFunc("/api/warden-status", corsMiddleware(handleWardenStatus))
+	mux.HandleFunc("/api/seeker-status", corsMiddleware(handleSeekerStatus)) // New
 	mux.HandleFunc("/api/wardens", corsMiddleware(handleGetWardens))
 	mux.HandleFunc("/api/warden/lookup", corsMiddleware(handleWardenLookup)) // New
 	mux.HandleFunc("/api/deposit", corsMiddleware(handleDeposit))           // New
@@ -109,6 +110,18 @@ func startServer() {
 	if err := http.ListenAndServe(":8088", mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
+}
+
+func handleSeekerStatus(w http.ResponseWriter, r *http.Request) {
+	reg, data, err := nodeInstance.GetSeekerStatus(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"is_registered": reg,
+		"seeker":        data,
+	})
 }
 
 func handleWardenStatus(w http.ResponseWriter, r *http.Request) {
