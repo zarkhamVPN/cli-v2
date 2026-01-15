@@ -61,12 +61,13 @@ func startServer() {
 
 	// API Endpoints
 	mux.HandleFunc("/api/warden-status", corsMiddleware(handleWardenStatus))
-	mux.HandleFunc("/api/seeker-status", corsMiddleware(handleSeekerStatus)) // New
+	mux.HandleFunc("/api/seeker-status", corsMiddleware(handleSeekerStatus))
 	mux.HandleFunc("/api/wardens", corsMiddleware(handleGetWardens))
-	mux.HandleFunc("/api/warden/lookup", corsMiddleware(handleWardenLookup)) // New
+	mux.HandleFunc("/api/warden/lookup", corsMiddleware(handleWardenLookup))
 	mux.HandleFunc("/api/deposit", corsMiddleware(handleDeposit))
 	mux.HandleFunc("/api/node/connect", corsMiddleware(handleNodeConnect))
-	mux.HandleFunc("/api/node/latency", corsMiddleware(handleGetLatency)) // New
+	mux.HandleFunc("/api/node/latency", corsMiddleware(handleGetLatency))
+	mux.HandleFunc("/api/node/bandwidth", corsMiddleware(handleGetBandwidth))
 	mux.HandleFunc("/api/seeker/disconnect", corsMiddleware(handleSeekerDisconnect))
 	mux.HandleFunc("/api/balance", corsMiddleware(handleGetBalance))
 	mux.HandleFunc("/api/addresses", corsMiddleware(handleGetAddresses))
@@ -76,6 +77,7 @@ func startServer() {
 	mux.HandleFunc("/api/node/status", corsMiddleware(handleNodeStatus))
 	mux.HandleFunc("/api/history", corsMiddleware(handleGetHistory))
 	mux.HandleFunc("/api/profile", corsMiddleware(handleGetProfile))
+	mux.HandleFunc("/api/transfer", corsMiddleware(handleTransfer))
 
 	// GUI Server
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -134,12 +136,14 @@ func handleSeekerDisconnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", 400)
 		return
 	}
-	err := nodeInstance.DisconnectWarden(r.Context(), req.WardenAuthority)
+
+	err := nodeInstance.DisconnectWarden(r.Context(), profile, req.WardenAuthority)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	w.WriteHeader(200)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte("{}"))
 }
 
 func handleWardenStatus(w http.ResponseWriter, r *http.Request) {
@@ -214,6 +218,15 @@ func handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(200)
+}
+
+func handleGetLatency(w http.ResponseWriter, r *http.Request) {
+	lat, err := nodeInstance.GetLatency(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(lat)
 }
 
 func handleGetBalance(w http.ResponseWriter, r *http.Request) {
@@ -350,8 +363,35 @@ func handleGetHistory(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(history)
 }
 
+func handleGetBandwidth(w http.ResponseWriter, r *http.Request) {
+	bw, err := nodeInstance.GetBandwidth(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(bw)
+}
+
 func handleGetProfile(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"profile": profile})
+}
+
+func handleTransfer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Profile   string  `json:"profile"`
+		Recipient string  `json:"recipient"`
+		Amount    float64 `json:"amount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", 400)
+		return
+	}
+	sig, err := nodeInstance.TransferFunds(r.Context(), req.Profile, req.Recipient, req.Amount)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"signature": sig})
 }
 
 func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
