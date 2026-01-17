@@ -13,6 +13,8 @@ import (
 	"syscall"
 
 	"zarkham/core"
+	"zarkham/core/config"
+	"zarkham/core/logger"
 
 	"github.com/multiformats/go-multiaddr"
 	manet "github.com/multiformats/go-multiaddr-net"
@@ -21,14 +23,22 @@ import (
 
 var nodeInstance *core.ZarkhamNode
 
+var p2pPort int
+
 var startCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Zarkham dVPN node",
 	Run: func(cmd *cobra.Command, args []string) {
-		var err error
+		appCfg, err := config.LoadOrInit(cfgDir)
+		if err != nil {
+			log.Fatalf("Failed to load app config: %v", err)
+		}
+
 		nodeInstance, err = core.NewZarkhamNode(core.Config{
 			ConfigDir:   cfgDir,
 			RpcEndpoint: rpcEndpoint,
+			SubmitTC:    appCfg.SubmitTC,
+			P2PPort:     p2pPort,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize node: %v", err)
@@ -43,10 +53,8 @@ var startCmd = &cobra.Command{
 
 		log.Printf("Zarkham Node is running (Profile: %s)", profile)
 
-		// Start API Server
 		go startServer()
 
-		// Wait for interruption
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
@@ -59,7 +67,6 @@ var startCmd = &cobra.Command{
 func startServer() {
 	mux := http.NewServeMux()
 
-	// API Endpoints
 	mux.HandleFunc("/api/warden-status", corsMiddleware(handleWardenStatus))
 	mux.HandleFunc("/api/seeker-status", corsMiddleware(handleSeekerStatus))
 	mux.HandleFunc("/api/wardens", corsMiddleware(handleGetWardens))
@@ -78,8 +85,8 @@ func startServer() {
 	mux.HandleFunc("/api/history", corsMiddleware(handleGetHistory))
 	mux.HandleFunc("/api/profile", corsMiddleware(handleGetProfile))
 	mux.HandleFunc("/api/transfer", corsMiddleware(handleTransfer))
+	mux.HandleFunc("/api/logs", corsMiddleware(handleLogs))
 
-	// GUI Server
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		if path == "/" {
@@ -90,7 +97,6 @@ func startServer() {
 
 		f, err := embeddedGUI.Open(path)
 		if os.IsNotExist(err) {
-			// SPA Fallback: Serve index.html for unknown paths
 			index, err := embeddedGUI.Open("index.html")
 			if err != nil {
 				http.Error(w, "GUI not found", 404)
@@ -113,6 +119,35 @@ func startServer() {
 	log.Println("Zarkham API Server listening on :8088")
 	if err := http.ListenAndServe(":8088", mux); err != nil {
 		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func handleLogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	logChan := logger.Subscribe()
+	defer logger.Unsubscribe(logChan)
+
+	notify := w.(http.CloseNotifier).CloseNotify()
+	
+	for {
+		select {
+		case entry := <-logChan:
+			data, err := json.Marshal(entry)
+			if err == nil {
+				fmt.Fprintf(w, "data: %s\n\n", data)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+		case <-notify:
+			return
+		case <-r.Context().Done():
+			return
+		}
 	}
 }
 
@@ -200,7 +235,7 @@ func handleDeposit(w http.ResponseWriter, r *http.Request) {
 func handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Multiaddr   string `json:"multiaddr"`
-		EstimatedMb uint64 `json:"estimatedMb"` // Optional
+		EstimatedMb uint64 `json:"estimatedMb"` 
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request", 400)
@@ -209,7 +244,7 @@ func handleNodeConnect(w http.ResponseWriter, r *http.Request) {
 	
 	mb := req.EstimatedMb
 	if mb == 0 {
-		mb = 100 // Default
+		mb = 100 
 	}
 
 	err := nodeInstance.ManualConnect(r.Context(), req.Multiaddr, mb)
@@ -290,7 +325,6 @@ func handleNodeStop(w http.ResponseWriter, r *http.Request) {
 func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	status := nodeInstance.Status()
 
-	// Find the optimal P2P multiaddr
 	var p2pMultiaddr string
 	var publicQuicAddr string
 	var privateQuicAddr string
@@ -303,12 +337,10 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if _, err := ma.ValueForProtocol(multiaddr.P_QUIC_V1); err == nil {
-			// This is a quic-v1 address
 			if manet.IsPublicAddr(ma) {
 				publicQuicAddr = addrStr
-				break // Found a public one, prioritize and break
+				break 
 			} else if privateQuicAddr == "" && !strings.Contains(addrStr, "127.0.0.1") {
-				// Keep the first non-loopback private address as a fallback
 				privateQuicAddr = addrStr
 			}
 		}
@@ -319,7 +351,6 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	} else if privateQuicAddr != "" {
 		p2pMultiaddr = privateQuicAddr
 	} else if len(status.Addresses) > 0 {
-		// Fallback to the first available address if no quic-v1 specific found
 		for _, addrStr := range status.Addresses {
 			ma, err := multiaddr.NewMultiaddr(addrStr)
 			if err != nil {
@@ -332,9 +363,7 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Append PeerID to make it a full multiaddr if we found a base address
 	if p2pMultiaddr != "" && status.PeerID != "" {
-		// Check if it already has the p2p component (it shouldn't, but safety first)
 		if !strings.Contains(p2pMultiaddr, "/p2p/") {
 			p2pMultiaddr = fmt.Sprintf("%s/p2p/%s", p2pMultiaddr, status.PeerID)
 		}
@@ -343,8 +372,9 @@ func handleNodeStatus(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"isRunning":    status.IsRunning,
 		"peerId":       status.PeerID,
-		"addresses":    status.Addresses, // Keep all addresses for debugging/info
-		"p2pMultiaddr": p2pMultiaddr,     // The selected optimal multiaddr
+		"addresses":    status.Addresses, 
+		"p2pMultiaddr": p2pMultiaddr,
+		"version":      "v1.0.0",
 	}
 	json.NewEncoder(w).Encode(response)
 }
@@ -410,5 +440,6 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func init() {
+	startCmd.Flags().IntVar(&p2pPort, "p2p-port", 0, "Port to listen for P2P connections (0 for random)")
 	rootCmd.AddCommand(startCmd)
 }

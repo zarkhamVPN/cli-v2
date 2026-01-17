@@ -5,7 +5,7 @@ import (
 	"io/fs"
 	"os"
 
-	figure "github.com/common-nighthawk/go-figure"
+	"github.com/common-nighthawk/go-figure"
 	"github.com/joho/godotenv"
 	"github.com/spf13/cobra"
 )
@@ -23,7 +23,10 @@ var rootCmd = &cobra.Command{
 	Long:  `A modular CLI to run Zarkham dVPN nodes and manage your Solana-based bandwidth economy.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		if err := godotenv.Load(); err != nil {
-			// Ignore missing .env in prod
+		}
+
+		if rpcEndpoint == "https://api.devnet.solana.com" {
+			rpcEndpoint = "https://api.zarkham.xyz/api/v1/proxy"
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
@@ -42,7 +45,13 @@ func Execute(guiFS fs.FS) {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&cfgDir, "config", "config", "Configuration directory")
+	home, err := os.UserHomeDir()
+	defaultCfg := "config"
+	if err == nil {
+		defaultCfg = fmt.Sprintf("%s/.zarkham/config", home)
+	}
+
+	rootCmd.PersistentFlags().StringVar(&cfgDir, "config", defaultCfg, "Configuration directory")
 	rootCmd.PersistentFlags().StringVar(&rpcEndpoint, "rpc", "https://api.devnet.solana.com", "Solana RPC endpoint")
 	rootCmd.PersistentFlags().StringVarP(&profile, "profile", "p", "default", "Wallet profile name")
 }
